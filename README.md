@@ -29,7 +29,14 @@ If you are on a Debian based Linux (like Ubuntu) you can also build a `.deb` pac
 
     # Build longshoreman.deb
     $ make dpkg
-    # Build and install it
-    $ make dpkg-install
 
 ## Installing
+
+Clone the repository and install with:
+
+    $ make install
+
+Or, if you're on a Debian based Linux (like Ubuntu) you can install it
+via the `.deb` package using:
+
+    $ make dpkg-install
