@@ -20,7 +20,9 @@ src/%:
 
 # creates a debian package for longshoreman
 # to install `sudo dpkg -i longshoreman.deb`
-dpkg: build
+dpkg: build longshoreman.deb
+
+longshoreman.deb:
 	dpkg-deb --version >/dev/null 2>&1 || (echo "Unable to run 'dpkg-deb'" && exit 1)
 	rm -rf deb/work
 	mkdir -p deb/work/usr/bin
@@ -33,8 +35,11 @@ dpkg: build
 	dpkg-deb --build deb/work
 	mv deb/work.deb longshoreman.deb
 
+dpkg-install: longshoreman.deb
+	sudo dpkg -i longshoreman.deb
+
 clean:
-	rm bin/longshoreman
+	rm bin/longshoreman longshoreman.deb
 	rm -rf deb/work
 
 realclean: clean
