@@ -37,6 +37,7 @@ Clone the repository and install with:
     $ make install
 
 Or, if you're on a Debian based Linux (like Ubuntu) you can install it
-via the `.deb` package using:
+via the `.deb` package either from the [releases page](https://github.com/mzsanford/longshoreman/releases)
+or by building and install with:
 
     $ make dpkg-install
