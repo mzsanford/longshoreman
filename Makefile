@@ -11,7 +11,7 @@ install: build
 
 bin/longshoreman: deps
 	[ -d bin ] || mkdir bin
-	go build -o bin/longshoreman main.go
+	GOPATH=$(GOPATH) go build -o bin/longshoreman main.go
 
 deps: $(GO_DEPS)
 

@@ -2,20 +2,16 @@ package longshoreman
 
 import (
 	"bytes"
-	"encoding/json"
 	"errors"
-	"fmt"
 	"github.com/fsouza/go-dockerclient"
-	// "io/ioutil"
 	"log"
-	"net/http"
 	"strings"
 	"time"
 )
 
 type Config struct {
-	RestartTimeout time.Duration
-	RepullTimeout  time.Duration
+	RestartTimeout time.Duration // Time to wait for container shutdown before killing
+	RepullTimeout  time.Duration // Total time to wait on repulls
 }
 
 type Longshoreman struct {
@@ -37,7 +33,10 @@ func New(hosts []string, image string) (l *Longshoreman) {
 	l = new(Longshoreman)
 	l.Hosts = hosts
 	l.Image = image
-	l.Config = Config{time.Duration(30 * time.Second), time.Duration(30 * time.Second)}
+	l.Config = Config{
+		time.Duration(10 * time.Second),
+		time.Duration(30 * time.Second),
+	}
 	return l
 }
 
@@ -138,28 +137,21 @@ func (l *Longshoreman) Restart() (errs []error) {
 }
 
 func getContainerIds(host string, name string) (containerIds []string, err error) {
-	output, err := fetchJSON(fmt.Sprintf("http://%s/containers/json", host))
+	client, err := docker.NewClient("http://" + host)
 	if err != nil {
 		return containerIds, err
 	}
 
-	for _, container := range output {
-		if strings.Split(container["Image"].(string), ":")[0] == name {
-			containerIds = append(containerIds, container["Id"].(string))
+	containers, err := client.ListContainers(docker.ListContainersOptions{})
+	if err != nil {
+		return containerIds, err
+	}
+
+	for _, container := range containers {
+		if strings.Split(container.Image, ":")[0] == name {
+			containerIds = append(containerIds, container.ID)
 		}
 	}
 
 	return containerIds, err
-}
-
-func fetchJSON(url string) (output []map[string]interface{}, err error) {
-	resp, err := http.Get(url)
-	if err != nil {
-		return output, err
-	}
-
-	dec := json.NewDecoder(resp.Body)
-	err = dec.Decode(&output)
-
-	return output, err
 }

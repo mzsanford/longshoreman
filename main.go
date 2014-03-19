@@ -7,6 +7,7 @@ import (
 	"log"
 	"os"
 	"strings"
+	"time"
 )
 
 var commands = []string{"repull", "restart", "deploy"}
@@ -26,7 +27,14 @@ func main() {
 	hostsArg := flag.String("hosts", "", "comma seperated list of IP:PORT pairs (REQUIRED)")
 	imageArg := flag.String("image", "", "image name to deploy (REQUIRED)")
 	commandArg := flag.String("command", "deploy", "command to run [repull, restart, deploy]")
+	pullTimeout := flag.Int("pull-timeout", 30, "seconds to wait for 'docker pull'")
+	restartWaitTime := flag.Int("restart-time-limit", 10, "seconds to wait for container restart before sending kill")
+	helpArg := flag.Bool("help", false, "display usage message")
 	flag.Parse()
+
+	if *helpArg {
+		usage()
+	}
 
 	if *imageArg == "" {
 		usageError("Missing required -image argument")
@@ -56,6 +64,8 @@ func main() {
 	}
 
 	longshoreman := longshoreman.New(hosts, *imageArg)
+	longshoreman.Config.RepullTimeout = time.Duration(*pullTimeout) * time.Second
+	longshoreman.Config.RestartTimeout = time.Duration(*restartWaitTime) * time.Second
 
 	if *commandArg == "repull" {
 		runRepull(longshoreman)
