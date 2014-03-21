@@ -11,6 +11,8 @@ import (
 
 var commands = []string{"pull", "restart", "deploy", "stop", "list", "cat"}
 
+const version = "0.1.1"
+
 func usageError(msg string) {
 	fmt.Fprintf(os.Stderr, "ERROR: %s\n\n", msg)
 	usage()
@@ -33,10 +35,16 @@ func main() {
 	verboseArg := flag.Bool("v", false, "Display debug logging")
 	quietArg := flag.Bool("q", false, "Quiet mode. Only log warnings and errors")
 	noColorArg := flag.Bool("no-color", false, "Do not colorize output if a terminal is detected")
+	versionArg := flag.Bool("version", false, "Display version number and exit")
 	flag.Parse()
 
 	if *helpArg {
 		usage()
+	}
+
+	if *versionArg {
+		fmt.Printf("Version: %s\n", version)
+		os.Exit(0)
 	}
 
 	// TODO: Maybe this is ok for commandArg==list?
