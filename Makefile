@@ -2,7 +2,12 @@
 GOPATH=$(PWD)
 INSTALLDIR=/usr/bin
 
-GO_DEPS=src/github.com/fsouza/go-dockerclient
+CPU_ARCH=$(shell uname -p)
+
+
+GO_DEPS=src/github.com/fsouza/go-dockerclient \
+        src/github.com/azer/go-style \
+        src/code.google.com/p/go.crypto/ssh/terminal
 
 build: bin/longshoreman
 
@@ -33,13 +38,13 @@ longshoreman.deb:
 	echo "whatever" > deb/work/usr/share/doc/longshoreman/copyright
 	echo "whatever" > deb/work/usr/share/doc/longshoreman/changelog
 	dpkg-deb --build deb/work
-	mv deb/work.deb longshoreman.deb
+	mv deb/work.deb longshoreman-$(CPU_ARCH).deb
 
-dpkg-install: longshoreman.deb
-	sudo dpkg -i longshoreman.deb
+dpkg-install: longshoreman-$(CPU_ARCH).deb
+	sudo dpkg -i longshoreman-$(CPU_ARCH).deb
 
 clean:
-	rm bin/longshoreman longshoreman.deb
+	rm -f bin/longshoreman longshoreman.deb
 	rm -rf deb/work
 
 realclean: clean

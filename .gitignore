@@ -2,4 +2,4 @@ bin
 pkg
 src
 deb/work
-longshoreman.deb
+longshoreman-*.deb

@@ -1,17 +1,19 @@
+// Structs and public methods
+//
 package longshoreman
 
 import (
+	"archive/tar"
 	"bytes"
-	"errors"
 	"github.com/fsouza/go-dockerclient"
-	"log"
-	"strings"
+	"io/ioutil"
 	"time"
 )
 
 type Config struct {
 	RestartTimeout time.Duration // Time to wait for container shutdown before killing
-	RepullTimeout  time.Duration // Total time to wait on repulls
+	PullTimeout    time.Duration // Total time to wait on pulls
+	StopTimeout    time.Duration // Time to wait for each container to stop
 }
 
 type Longshoreman struct {
@@ -19,6 +21,7 @@ type Longshoreman struct {
 	Image    string
 	ImageTag string
 	Config   Config
+	Logger   *Logger
 	fakeIn   bytes.Buffer
 	fakeOut  bytes.Buffer
 	fakeErr  bytes.Buffer
@@ -29,6 +32,16 @@ type RemoteError struct {
 	host  string
 }
 
+type HostStatus struct {
+	Host       string
+	Containers []docker.Container
+}
+
+type HostContents struct {
+	Host     string
+	Contents string
+}
+
 func New(hosts []string, image string) (l *Longshoreman) {
 	l = new(Longshoreman)
 	l.Hosts = hosts
@@ -36,122 +49,97 @@ func New(hosts []string, image string) (l *Longshoreman) {
 	l.Config = Config{
 		time.Duration(10 * time.Second),
 		time.Duration(30 * time.Second),
+		time.Duration(10 * time.Second),
 	}
+	l.Logger = NewLogger(LogLevelInfo)
 	return l
 }
 
-func (l *Longshoreman) pull(host string, name string, done chan bool, errors chan RemoteError) {
-	log.Printf("  - [%s] Pull: %s", host, name)
-
-	client, err := docker.NewClient("http://" + host)
-	if err != nil {
-		errors <- RemoteError{err, host}
-		return
-	}
-
-	err = client.PullImage(docker.PullImageOptions{l.Image, "", &l.fakeOut}, docker.AuthConfiguration{})
-	if err == nil {
-		log.Printf("  - [%s] Pull: %s completed", host, name)
-		done <- true
-	} else {
-		log.Printf("  - [%s] Pull: %s completed in error", host, name)
-		errors <- RemoteError{err, host}
-	}
-}
-
-func (l *Longshoreman) Repull() (errs []error) {
-	doneChan := make(chan bool)
-	errChan := make(chan RemoteError)
-	numHosts := len(l.Hosts)
-
-	log.Printf("Starting pull of %s on %d hosts\n", l.Image, numHosts)
-
-	for _, host := range l.Hosts {
-		go l.pull(host, l.Image, doneChan, errChan)
-	}
-
-	completed := 0
-	errored := 0
-	pullErrors := make([]RemoteError, 0)
-	for completed < numHosts {
-		select {
-		case <-doneChan:
-			completed += 1
-		case err := <-errChan:
-			completed += 1
-			errored += 1
-			pullErrors = append(pullErrors, err)
-		case <-time.After(l.Config.RepullTimeout):
-			allErrors := make([]error, 0)
-			for _, rerr := range pullErrors {
-				allErrors = append(allErrors, rerr.error)
-			}
-			return append(allErrors, errors.New("Timeout while waiting for parallel repull"))
-		}
-
-		log.Printf("  - status: %d of %d completed (%d completed in error)", completed, numHosts, errored)
-	}
-
-	log.Printf("Pull of %s on %d hosts completed\n", l.Image, numHosts)
-	allErrors := make([]error, 0)
-	for idx, rerr := range pullErrors {
-		log.Printf(" Error %d: [%s] %s\n", idx+1, rerr.host, rerr.error)
-		allErrors = append(allErrors, rerr.error)
-	}
-
-	return allErrors
-}
+type dockerClientHostCall func(client *docker.Client, longshoreman *Longshoreman) error
+type dockerAsyncClientHostCall func(client *docker.Client, longshoreman *Longshoreman, host string, done chan bool, errors chan RemoteError)
+type dockerClientContainerCall func(client *docker.Client, longshoreman *Longshoreman, host string, containerId string) error
 
 func (l *Longshoreman) Restart() (errs []error) {
-	restartErrors := make([]error, 0)
-	numHosts := len(l.Hosts)
-
-	log.Printf("Starting restart of %s on %d hosts\n", l.Image, numHosts)
-
-	for _, host := range l.Hosts {
-		client, err := docker.NewClient("http://" + host)
-		if err != nil {
-			restartErrors = append(restartErrors, err)
-			continue
-		}
-
-		log.Printf("  - [%s] Restart: %s", host, l.Image)
-		containerIds, err := getContainerIds(host, l.Image)
-		if err != nil {
-			restartErrors = append(restartErrors, err)
-		}
-
-		for _, cid := range containerIds {
-			log.Printf("  - [%s] restarting container %s", host, cid[:15])
-			err = client.RestartContainer(cid, uint(l.Config.RestartTimeout.Seconds()))
-
-			if err != nil {
-				restartErrors = append(restartErrors, err)
-			}
-		}
-	}
-
-	log.Printf("Completed restart of %s on %d hosts\n", l.Image, numHosts)
-
-	return restartErrors
+	return l.sequentiallyCallForContainers("restart", func(client *docker.Client, longshoreman *Longshoreman, host string, containerId string) error {
+		return client.RestartContainer(containerId, uint(longshoreman.Config.RestartTimeout.Seconds()))
+	})
 }
 
-func getContainerIds(host string, name string) (containerIds []string, err error) {
-	client, err := docker.NewClient("http://" + host)
-	if err != nil {
-		return containerIds, err
-	}
+func (l *Longshoreman) Stop() (errs []error) {
+	return l.sequentiallyCallForContainers("stop", func(client *docker.Client, longshoreman *Longshoreman, host string, containerId string) error {
+		return client.StopContainer(containerId, uint(longshoreman.Config.RestartTimeout.Seconds()))
+	})
+}
 
-	containers, err := client.ListContainers(docker.ListContainersOptions{})
-	if err != nil {
-		return containerIds, err
-	}
-
-	for _, container := range containers {
-		if strings.Split(container.Image, ":")[0] == name {
-			containerIds = append(containerIds, container.ID)
+func (l *Longshoreman) List(results chan HostStatus) (errs []error) {
+	errs = l.parallelCallForHosts("list", func(client *docker.Client, longshoreman *Longshoreman, host string, done chan bool, errors chan RemoteError) {
+		containers, err := client.ListContainers(docker.ListContainersOptions{})
+		if err != nil {
+			errors <- RemoteError{err, host}
+			return
 		}
-	}
 
-	return containerIds, err
+		hostStatus := HostStatus{host, nil}
+		hostStatus.Host = host
+		hostStatus.Containers = make([]docker.Container, 0, len(containers))
+		for _, container := range containers {
+			if longshoreman.shouldIncludeContainer(container.Image) {
+				containerDetail, err := client.InspectContainer(container.ID)
+				if err != nil {
+					errors <- RemoteError{err, host}
+					return
+				}
+
+				hostStatus.Containers = append(hostStatus.Containers, *containerDetail)
+			}
+		}
+		results <- hostStatus
+
+		done <- true
+	})
+
+	close(results)
+
+	return errs
+}
+
+func (l *Longshoreman) Cat(path string, results chan HostContents) (errs []error) {
+	errs = l.sequentiallyCallForContainers("cat", func(client *docker.Client, longshoreman *Longshoreman, host string, containerId string) error {
+		contents := HostContents{host, ""}
+		buffer := new(bytes.Buffer)
+		err := client.CopyFromContainer(docker.CopyFromContainerOptions{buffer, containerId, path})
+		if err != nil {
+			return err
+		}
+
+		// Extract the single file tar
+		r := bytes.NewReader(buffer.Bytes())
+		tr := tar.NewReader(r)
+		_, err = tr.Next()
+		if err != nil {
+			return err
+		}
+
+		rawContents, err := ioutil.ReadAll(tr)
+		contents.Contents = string(rawContents)
+
+		results <- contents
+		return err
+	})
+
+	close(results)
+	return errs
+}
+
+func (l *Longshoreman) Pull() (errs []error) {
+	return l.parallelCallForHosts("pull", func(client *docker.Client, longshoreman *Longshoreman, host string, done chan bool, errors chan RemoteError) {
+		err := client.PullImage(docker.PullImageOptions{l.Image, "", &l.fakeOut}, docker.AuthConfiguration{})
+		if err == nil {
+			longshoreman.Logger.Debug("  - [%s] Pull: %s completed", host, longshoreman.Image)
+			done <- true
+		} else {
+			longshoreman.Logger.Error("  - [%s] Pull: %s completed in error", host, longshoreman.Image)
+			errors <- RemoteError{err, host}
+		}
+	})
 }
