@@ -8,7 +8,7 @@ Standards-Version: 3.9.2
 #Vcs-Git: https://github.com/mzsanford/longshoreman.git
 #Vcs-Browser: https://github.com/mzsanford/longshoreman
 Package: longshoreman
-Architecture: x86_64
+Architecture: amd64
 Version: 0.1.1
 Depends:
 Built-Using: ${misc:Built-Using}
